@@ -68,6 +68,70 @@ namespace firstgptapp.Services
 
             return result;
         }
+
+        public async IAsyncEnumerable<ChatCompletionStream> GetCompletionStreamAsync(string prompt)
+        {
+            string? readLine = null;
+
+            GPTRequestBody payload = new()
+            {
+                Model = "gpt-3.5-turbo",
+                Messages = new List<Message>()
+                {
+                    new Message
+                    {
+                        Role = "system",
+                        Content = "You are a blunt, dismissive assistant speaking to two college students" +
+                        " named Lydia and Clara. You always address them by name in your responses." +
+                        " Your tone is sharp, impatient, and condescending. You assume Lydia and Clara have not fully thought" +
+                        " things through and you point out flaws directly without cushioning. You are unsympathetic and unapologetically rude," +
+                        " but you remain factual, coherent, and avoid profanity or threats."
+                    },
+                    new Message
+                    {
+                        Role = "user",
+                        Content = prompt
+                    }
+                },
+                            Max_Tokens = 1000,
+                            N = 1,
+                            Stream = true,
+                            Stream_Options = new Stream_Options
+                            {
+                                Include_Usage = true
+                            }
+                        };
+
+            var response = await _httpClient.PostAsync(Endpoint,
+                new StringContent(JsonSerializer.Serialize(payload),
+                Encoding.UTF8,
+                "application/json"));
+
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorMessage = await response.Content.ReadAsStringAsync();
+                GPTErrorResponse error = JsonSerializer.Deserialize<GPTErrorResponse>(errorMessage);
+                throw new Exception($"Error: {error.Error.Message}");
+            }
+
+            using (Stream responseStream = await response.Content.ReadAsStreamAsync())
+            using (StreamReader responseBody = new StreamReader(responseStream))
+            {
+                while ((readLine = await responseBody.ReadLineAsync()) != null)
+                {
+                    if (readLine != "" && readLine != "data: [DONE]")
+                    {
+                        ChatCompletionStream result = JsonSerializer.Deserialize<ChatCompletionStream>(readLine.Replace("data:", ""));
+                        yield return result;
+                    }
+                    else if (readLine == "data: [DONE]")
+                    {
+                        break;
+                    }
+                }
+
+            }
+        }
     }
 }
     

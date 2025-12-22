@@ -14,6 +14,10 @@ namespace firstgptapp.Models
         public float? Max_Tokens { get; set; }
 
         [JsonPropertyName("n")]
-        public int? N { get; set; }  
+        public int? N { get; set; }
+        [JsonPropertyName("stream")]
+        public bool? Stream { get; set; }
+        [JsonPropertyName("stream_options")]
+        public Stream_Options? Stream_Options { get; set; }
     }
 }

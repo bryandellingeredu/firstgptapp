@@ -12,7 +12,7 @@
                 @if (dialog.IsPrompt)
                 {
                     // The dialog.MessageText is the user input
-                    <span class="message-text">@dialog.MessageText</span>
+                    <span class="message-text">@((MarkupString)dialog.MessageText)</span>
                     <img src="images/User.webp" class="message-icon" alt="User icon" />
                 }
                 else
@@ -35,7 +35,7 @@
     <br />
     <div class="chat-input">
         <textarea rows="1" cols="5" type="text" @bind="userInput" placeholder="Type your question..." />
-        <button @onclick="GetResponse">Ask</button>
+        <button @onclick="GetResponseStream">Ask</button>
     </div>
 </div>
 
@@ -78,6 +78,52 @@
         // completion_tokens = response.Usage.Completion_Tokens.ToString();
         // total_tokens = response.Usage.Total_Tokens.ToString();
     }
+
+    private async Task GetResponseStream()
+    {
+        myPrompt = userInput;
+        dialogs.Add(new Dialog { MessageText = myPrompt, IsPrompt = true });
+        userInput = ""; // clear the input field
+        var response = await GPT3Service.GetCompletionAsync(myPrompt);
+        Dialog? lastDialog = null;
+        dialogs.Add(new Dialog
+        {
+            MessageText = "",
+            IsPrompt = false
+        });
+
+        await foreach (var item in GPT3Service.GetCompletionStreamAsync(myPrompt))
+        {
+            if (item.Choices.Count > 0 && item.Choices[0].Delta.Content != null)
+            {
+                if(lastDialog == null)
+                {
+                    lastDialog = dialogs.LastOrDefault();
+                } 
+                else if(lastDialog != null)
+                {
+                    lastDialog.MessageText += item.Choices[0].Delta.Content;
+                  
+                }
+            }
+            else if(item.Choices.Count > 0 && item.Choices[0].Delta.Content == null)
+            {
+                if(item.Choices[0].Finish_Reason == "length")
+                {
+                    lastDialog!.MessageText += "<p><b><i>Finish Reason = length<i><b><p>";
+                } 
+                else if(item.Choices[0].Finish_Reason == "stop")
+                {
+                    break;
+                }
+                
+            } 
+            StateHasChanged();
+            Thread.Sleep(150);   
+        }
+
+    }
+
 
     private class Dialog
     {
