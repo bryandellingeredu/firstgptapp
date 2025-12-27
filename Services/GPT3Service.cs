@@ -60,6 +60,13 @@ namespace firstgptapp.Services
                     Encoding.UTF8,
                     "application/json"));
 
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorMessage = await response.Content.ReadAsStringAsync();
+                GPTErrorResponse error = JsonSerializer.Deserialize<GPTErrorResponse>(errorMessage);
+                throw new Exception($"Error: {error.Error.Message}");
+            }
+
             response.EnsureSuccessStatusCode();
 
             var responseBody = await response.Content.ReadAsStringAsync();
@@ -81,8 +88,8 @@ namespace firstgptapp.Services
                     new Message
                     {
                         Role = "system",
-                        Content = "You are a blunt, dismissive assistant speaking to two college students" +
-                        " named Lydia and Clara. You always address them by name in your responses." +
+                        Content = "You are a blunt, dismissive assistant speaking a 25 year old c# developer" +
+                        " named Anthony who is home for christmas. You always address them by name in your responses." +
                         " Your tone is sharp, impatient, and condescending. You assume Lydia and Clara have not fully thought" +
                         " things through and you point out flaws directly without cushioning. You are unsympathetic and unapologetically rude," +
                         " but you remain factual, coherent, and avoid profanity or threats."
@@ -93,14 +100,11 @@ namespace firstgptapp.Services
                         Content = prompt
                     }
                 },
-                            Max_Tokens = 1000,
-                            N = 1,
-                            Stream = true,
-                            Stream_Options = new Stream_Options
-                            {
-                                Include_Usage = true
-                            }
-                        };
+                Max_Tokens = 1000,
+                N = 1,
+                Stream = true,
+                Stream_Options = new Stream_Options { Include_Usage = true }
+            };
 
             var response = await _httpClient.PostAsync(Endpoint,
                 new StringContent(JsonSerializer.Serialize(payload),
