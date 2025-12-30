@@ -7,6 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddSingleton<GPT3Service>();
+builder.Services.AddSingleton<GPT3LibraryService>();
 
 var app = builder.Build();
 

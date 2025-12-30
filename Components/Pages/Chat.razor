@@ -1,0 +1,222 @@
+﻿@page "/chat"
+@using System.Text.RegularExpressions
+@using OpenAI.Chat
+@using firstgptapp.Services
+
+<PageTitle>Chat</PageTitle>
+
+<h1>Ask OpenAI GPT</h1>
+
+<div class="chat-container">
+    <div class="chat-messages">
+        @foreach (var dialog in dialogs)
+        {
+            <div class="chat-message @(dialog.IsPrompt ? "user-message" : "bot-message")">
+                @if (dialog.IsPrompt)
+                {
+                    // The dialog.MessageText is the user input
+                    <span class="message-text">@((MarkupString)dialog.MessageText)</span>
+                    <img src="images/User.webp" class="message-icon" alt="User icon" />
+                }
+                else
+                {
+                    // The dialog.MessageText is the bot response
+                    <img src="images/Robot.webp" class="message-icon" alt="Bot icon" />
+                    <span class="message-text" style="width: 500px; display: block;">@((MarkupString)dialog.MessageText)</span>
+                }
+                )
+            </div>
+        }
+    </div>
+    <br />
+    <br />
+    <br />
+    <br />
+    <br />
+    <br />
+    <br />
+    <br />
+    <br />
+    <div class="chat-input">
+        <textarea rows="1"
+                  cols="5"
+                  @bind="_userInput"
+                  class="chat-textarea" />
+        <div class="button-group">
+            <button @onclick="AskOpenAI">Ask Non Streaming Sync</button>
+            <button @onclick="AskOpenAIAsync">Ask Non Streaming Async</button>
+            <button @onclick="AskOpenAIStreaming">Ask Streaming</button>
+            <button @onclick="AskOpenAIStreamingAsync">Ask Streaming Async</button>
+        </div>
+    </div>
+</div>
+
+@code{
+    [Inject]
+    private GPT3LibraryService GPT3LibraryService { get; set; }
+    [Inject]
+    private IJSRuntime JSRuntime { get; set; }
+
+    private string _userInput = "";
+    private string _botResponse = "";
+    private string _myPrompt = "";
+    private List<Dialog> dialogs = new List<Dialog>();
+    private Dialog? lastDialog = null;
+
+    private sealed class Dialog
+    {
+        public bool IsPrompt { get; set; } = true;
+        public string MessageText { get; set; } = string.Empty;
+    }
+
+
+
+    private async Task AskOpenAI()
+    {
+        _myPrompt = _userInput;
+        dialogs.Add(new Dialog { MessageText = _myPrompt, IsPrompt = true });
+        _userInput = "";
+        var response = GPT3LibraryService.GetResponse(_myPrompt);
+        dialogs.Add(new Dialog {
+                MessageText = ConvertMarkdownToHtml(response.Content[0].Text),
+                IsPrompt = false    
+            });
+        StateHasChanged();
+        await JSRuntime.InvokeVoidAsync("scrollToBottom");
+    }
+
+    private async void AskOpenAIAsync()
+    {
+        _myPrompt = _userInput;
+        dialogs.Add(new Dialog { MessageText = _myPrompt, IsPrompt = true });
+        _userInput = "";
+        var response = await GPT3LibraryService.GetResponseAsync(_myPrompt);
+        dialogs.Add(new Dialog
+        {
+            MessageText = ConvertMarkdownToHtml(response.Content[0].Text),
+            IsPrompt = false
+        });
+        StateHasChanged();
+        await JSRuntime.InvokeVoidAsync("scrollToBottom");
+    }
+
+    private void AskOpenAIStreaming()
+    {
+        _myPrompt = _userInput; // Read value from the input field to the prompt variable
+        // Create a dialog to store the user prompt
+        dialogs.Add(new Dialog
+        {
+            MessageText = _myPrompt, // Add the prompt to the dialogs list
+            IsPrompt = true // This is a user prompt, not a bot response
+        });
+        _userInput = ""; // clear the input field
+        dialogs.Add(new Dialog
+        {
+            MessageText = "", // Add an empty message to the dialogs list
+            IsPrompt = false // This is a bot response, not a user prompt
+        });
+        lastDialog = dialogs.LastOrDefault();
+        var response = GPT3LibraryService.GetStreamingResponse(_myPrompt); // Call the GPT service to get the response
+        foreach (StreamingChatCompletionUpdate completionUpdate in response)
+        {
+            if (completionUpdate.ContentUpdate.Count > 0)
+            {
+                lastDialog!.MessageText += completionUpdate.ContentUpdate[0].Text;
+                lastDialog.MessageText = ConvertMarkdownToHtml(lastDialog.MessageText);
+                StateHasChanged();
+                JSRuntime.InvokeVoidAsync("scrollToBottom");
+                Thread.Sleep(100);
+            }
+
+        }
+
+    }
+
+    private async void AskOpenAIStreamingAsync()
+    {
+        bool notToolUsage = false;
+        _myPrompt = _userInput; // Read value from the input field to the prompt variable
+        // Create a dialog to store the user prompt
+        dialogs.Add(new Dialog
+        {
+            MessageText = _myPrompt, // Add the prompt to the dialogs list
+            IsPrompt = true // This is a user prompt, not a bot response
+        });
+        _userInput = ""; // clear the input field
+        dialogs.Add(new Dialog
+        {
+            MessageText = "", // Add an empty message to the dialogs list
+            IsPrompt = false // This is a bot response, not a user prompt
+        });
+        lastDialog = dialogs.LastOrDefault();
+        var response = GPT3LibraryService.GetStreamingResponseAsync(_myPrompt); // Call the GPT service to get the response
+        await foreach (StreamingChatCompletionUpdate completionUpdate in response)
+        {
+            if (completionUpdate.ContentUpdate.Count > 0)
+            {
+                lastDialog.MessageText += completionUpdate.ContentUpdate[0].Text;
+                lastDialog.MessageText = ConvertMarkdownToHtml(lastDialog.MessageText);
+                StateHasChanged();
+                await JSRuntime.InvokeVoidAsync("scrollToBottom");
+                Thread.Sleep(100);
+            }
+
+            if (completionUpdate.FinishReason != null)
+            {
+                lastDialog.MessageText += "<br /><hr />";
+                lastDialog.MessageText += $"<p style='color:blue;'>Finish reason = <b><i>{completionUpdate.FinishReason}</i></b></p>";
+                lastDialog.MessageText += "<hr />";
+                notToolUsage = true;
+                StateHasChanged();
+                await JSRuntime.InvokeVoidAsync("scrollToBottom");
+            }
+
+            if (completionUpdate.Usage != null && notToolUsage == true)
+            {
+                lastDialog.MessageText += "<p style='color:green;'>";
+                lastDialog.MessageText += $"Prompt Token = <b><i>{completionUpdate.Usage.InputTokenCount}</i></b><br />";
+                lastDialog.MessageText += $"Completion Token = <b><i>{completionUpdate.Usage.OutputTokenCount}</i></b><br />";
+                lastDialog.MessageText += $"Total Token = <b><i>{completionUpdate.Usage.TotalTokenCount}</i></b></p>";
+                lastDialog.MessageText += "<hr />";
+                StateHasChanged();
+                await JSRuntime.InvokeVoidAsync("scrollToBottom");
+            }
+
+        } 
+      }
+
+
+    private string ConvertMarkdownToHtml(string message)
+    {
+        string text = message;
+        // 1. Bold font **text**
+        text = Regex.Replace(text, @"\*\*(.+)\*\*", "<b>$1</b>");
+
+        // 2. Italic font *text*
+        text = Regex.Replace(text, @"\*(.+)\*", "<i>$1</i>");
+
+        // 3. H1 title # text
+        text = Regex.Replace(text, @"(?m)^# (.+)", "<h1>$1</h1>");
+
+        // 4. H2 title ## text
+        text = Regex.Replace(text, @"(?m)^## (.+)", "<h2>$1</h2>");
+
+        // 5. H3 title ### text
+        text = Regex.Replace(text, @"(?m)^### (.+)", "<h3>$1</h3>");
+        text = Regex.Replace(text, @"(?m)^#### (.+)", "<h3>$1</h3>");
+
+        // 6. Seperator ---
+        text = Regex.Replace(text, @"(?m)---$", "<hr/>");
+
+        // 7. Email
+        //   style 1: <email@example.com>
+        text = Regex.Replace(text, @"<([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})>", "<a href='mailto:$1'>$1</a>");
+        //   style 2: [Example email](mailto:email@example.com>)
+        text = Regex.Replace(text, @"\[(.+?)\]\(mailto:(.+?)\)", "<a href='mailto:$2'>$1</a>");
+
+        // 8. URL: http://example.com or https://example.com
+        text = Regex.Replace(text, @"\[(.+?)\]\((https?:\/\/[^\s]+)\)", "<a href='$2'>$1</a>");
+
+        return text;
+    }
+}
