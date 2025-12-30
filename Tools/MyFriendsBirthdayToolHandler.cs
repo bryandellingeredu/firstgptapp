@@ -1,7 +1,7 @@
 ﻿using firstgptapp.Interfaces;
 using System.Text.Json;
 
-namespace firstgptapp.Services
+namespace firstgptapp.Tools
 {
     public class MyFriendsBirthdayToolHandler : IToolHandler
     {

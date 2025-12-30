@@ -1,10 +1,10 @@
 ﻿
 
 using firstgptapp.Interfaces;
+using firstgptapp.Services.HelperClasses;
+using firstgptapp.Tools;
 using OpenAI.Chat;
-using System.Buffers;
 using System.ClientModel;
-using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 namespace firstgptapp.Services
@@ -17,18 +17,18 @@ namespace firstgptapp.Services
         public GPT3LibraryService(string gptModel = "gpt-3.5-turbo")
         {
             _client = new ChatClient(model: gptModel, apiKey: configuration["OpenAI_API_Key"]);
-           
+
             toolRegistry = new ToolRegistry(new List<IToolHandler>
                 {
                     new CurrentDateTimeToolHandler(),
                     new MyFriendsBirthdayToolHandler()
-                });   
-            }
+                });
+        }
 
         public ChatCompletion GetResponse(string prompt)
         {
             ChatCompletionOptions options = new();
-          
+
             foreach (ChatTool tool in toolRegistry.GetAllTools())
             {
                 options.Tools.Add(tool);
@@ -39,33 +39,33 @@ namespace firstgptapp.Services
                 ChatMessage.CreateUserMessage(prompt)
                 ];
 
-           ChatCompletion result;
+            ChatCompletion result;
             bool requiresAction;
 
             do
             {
-                requiresAction = false; 
+                requiresAction = false;
                 result = _client.CompleteChat(messages, options);
                 switch (result.FinishReason)
                 {
-                            case ChatFinishReason.Stop:
-                            case ChatFinishReason.Length:
-                               messages.Add(ChatMessage.CreateAssistantMessage(result));
-                              break;
-                           
-                            case ChatFinishReason.ToolCalls:
-                                messages.Add(new AssistantChatMessage(result));
-                                foreach (var toolCall in result.ToolCalls)
-                                {
-                                  using JsonDocument doc = JsonDocument.Parse(toolCall.FunctionArguments); 
-                                  string toolResult = toolRegistry.InvokeAsync(toolCall.FunctionName, doc.RootElement).GetAwaiter().GetResult();
-                                  messages.Add(new ToolChatMessage(toolCall.Id, toolResult)); 
-                        }   
+                    case ChatFinishReason.Stop:
+                    case ChatFinishReason.Length:
+                        messages.Add(ChatMessage.CreateAssistantMessage(result));
+                        break;
+
+                    case ChatFinishReason.ToolCalls:
+                        messages.Add(new AssistantChatMessage(result));
+                        foreach (var toolCall in result.ToolCalls)
+                        {
+                            using JsonDocument doc = JsonDocument.Parse(toolCall.FunctionArguments);
+                            string toolResult = toolRegistry.InvokeAsync(toolCall.FunctionName, doc.RootElement).GetAwaiter().GetResult();
+                            messages.Add(new ToolChatMessage(toolCall.Id, toolResult));
+                        }
                         requiresAction = true;
                         break;
 
                     default:
-                      break;
+                        break;
                 }
             } while (requiresAction);
 
@@ -164,149 +164,6 @@ namespace firstgptapp.Services
             } while (requiresAction);
 
         }
-
-
-
-        #region [05] Helper Classes for GPTService
-        /// <summary>
-        /// This class is responsible for incrementally collecting streaming tool call 
-        /// updates (StreamingChatToolCallUpdate) from OpenAI’s Chat API, and finally 
-        /// assembling them into a list of complete ChatToolCall objects.
-        /// </summary>
-        public class StreamingChatToolCallsBuilder
-        {
-            private readonly Dictionary<int, string> _indexToToolCallId = [];
-            private readonly Dictionary<int, string> _indexToFunctionName = [];
-            private readonly Dictionary<int, SequenceBuilder<byte>> _indexToFunctionArguments = [];
-
-            /// <summary>
-            /// Appends each incoming update from the stream.
-            /// </summary>
-            public void Append(StreamingChatToolCallUpdate toolCallUpdate)
-            {
-                // Keep track of which tool call ID belongs to this update index.
-                if (toolCallUpdate.ToolCallId != null)
-                {
-                    _indexToToolCallId[toolCallUpdate.Index] = toolCallUpdate.ToolCallId;
-                }
-
-                // Keep track of which function name belongs to this update index.
-                if (toolCallUpdate.FunctionName != null)
-                {
-                    _indexToFunctionName[toolCallUpdate.Index] = toolCallUpdate.FunctionName;
-                }
-
-                // Keep track of which function arguments belong to this update index,
-                // and accumulate the arguments as new updates arrive.
-                if (toolCallUpdate.FunctionArgumentsUpdate != null && !toolCallUpdate.FunctionArgumentsUpdate.ToMemory().IsEmpty)
-                {
-                    if (!_indexToFunctionArguments.TryGetValue(toolCallUpdate.Index, out SequenceBuilder<byte> argumentsBuilder))
-                    {
-                        argumentsBuilder = new SequenceBuilder<byte>();
-                        _indexToFunctionArguments[toolCallUpdate.Index] = argumentsBuilder;
-                    }
-
-                    argumentsBuilder.Append(toolCallUpdate.FunctionArgumentsUpdate);
-                }
-            }
-
-            /// <summary>
-            /// Assembles all accumulated fragments into a complete list of ChatToolCall instances.
-            /// </summary>
-            public IReadOnlyList<ChatToolCall> Build()
-            {
-                List<ChatToolCall> toolCalls = [];
-
-                foreach ((int index, string toolCallId) in _indexToToolCallId)
-                {
-                    ReadOnlySequence<byte> sequence = _indexToFunctionArguments[index].Build();
-
-                    ChatToolCall toolCall = ChatToolCall.CreateFunctionToolCall(
-                        id: toolCallId,
-                        functionName: _indexToFunctionName[index],
-                        functionArguments: BinaryData.FromBytes(sequence.ToArray()));
-
-                    toolCalls.Add(toolCall);
-                }
-
-                return toolCalls;
-            }
-        }
-
-        /// <summary>
-        /// A generic helper to accumulate memory fragments and efficiently build 
-        /// a ReadOnlySequence<T> for byte-stream-like data.
-        /// </summary>
-        public class SequenceBuilder<T>
-        {
-            Segment _first;
-            Segment _last;
-
-            /// <summary>
-            /// Appends a memory segment to the internal linked list structure.
-            /// </summary>
-            public void Append(ReadOnlyMemory<T> data)
-            {
-                if (_first == null)
-                {
-                    Debug.Assert(_last == null);
-                    _first = new Segment(data);
-                    _last = _first;
-                }
-                else
-                {
-                    _last = _last!.Append(data);
-                }
-            }
-
-            /// <summary>
-            /// Constructs and returns a ReadOnlySequence<T> made from the accumulated segments.
-            /// </summary>
-            public ReadOnlySequence<T> Build()
-            {
-                if (_first == null)
-                {
-                    Debug.Assert(_last == null);
-                    return ReadOnlySequence<T>.Empty;
-                }
-
-                if (_first == _last)
-                {
-                    Debug.Assert(_first.Next == null);
-                    return new ReadOnlySequence<T>(_first.Memory);
-                }
-
-                return new ReadOnlySequence<T>(_first, 0, _last!, _last!.Memory.Length);
-            }
-
-            /// <summary>
-            /// A custom implementation of ReadOnlySequenceSegment<T>. 
-            /// It holds one memory block and points to the next one, 
-            /// allowing the entire sequence to be reconstructed as a stream.
-            /// </summary>
-            private sealed class Segment : ReadOnlySequenceSegment<T>
-            {
-                public Segment(ReadOnlyMemory<T> items) : this(items, 0)
-                {
-                }
-
-                private Segment(ReadOnlyMemory<T> items, long runningIndex)
-                {
-                    Debug.Assert(runningIndex >= 0);
-                    Memory = items;
-                    RunningIndex = runningIndex;
-                }
-
-                public Segment Append(ReadOnlyMemory<T> items)
-                {
-                    long runningIndex;
-                    checked { runningIndex = RunningIndex + Memory.Length; }
-                    Segment segment = new(items, runningIndex);
-                    Next = segment;
-                    return segment;
-                }
-            }
-        }
-        #endregion
+      
     }
 }

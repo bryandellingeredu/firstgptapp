@@ -2,7 +2,7 @@
 using OpenAI.Chat;
 using System.Text.Json;
 
-namespace firstgptapp.Services
+namespace firstgptapp.Tools
 {
     public class ToolRegistry
     {
